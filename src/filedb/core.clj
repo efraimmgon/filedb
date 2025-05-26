@@ -21,7 +21,7 @@
 (defn mkvec
   "Wraps x in a vector if it's not a vector."
   [x]
-  (if (vector? x)
+  (if-not (vector? x)
     [x]
     x))
 

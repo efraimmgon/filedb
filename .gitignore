@@ -3,3 +3,4 @@
 .clj-kondo/.cache
 .lsp
 .nrepl-port
+todo.md

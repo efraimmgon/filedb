@@ -1,9 +1,10 @@
 (ns filedb.core-test
   (:require
-   [clojure.test :refer :all]
-   [me.raynes.fs :as fs]
    [clojure.java.io :as io]
-   [filedb.core :refer :all]))
+   [clojure.test :refer :all]
+   [filedb.core :refer :all]
+   [filedb.protocols :refer [*db-root*]]
+   [me.raynes.fs :as fs]))
 
 (def test-db-dir "test-fsdb")
 

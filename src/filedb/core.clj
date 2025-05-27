@@ -3,7 +3,11 @@
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.test :as test]
+   [filedb.protocols :as p]
    [me.raynes.fs :as fs]))
+
+(def counter-doc-id
+  "__counter__.edn")
 
 (defn read-string*
   "Reads an EDN string with support for #inst literals.
@@ -66,17 +70,6 @@
                       (vector? y) (concat x y)
                       :else y))
               a b))
-
-(def ^:dynamic *db-root*
-  "The root directory for the database.
-   Can be dynamically rebound to change the database location.
-   
-   Default value: \"fsdb\"
-   
-   Example:
-   (binding [*db-root* \"custom-db\"]
-     (insert :users {...}))"
-  "fsdb")
 
 (defn ->str
   "Converts a value to its string representation.
@@ -144,31 +137,6 @@
   [_table-name]
   :_updated-at)
 
-(defn get-table-path
-  "Constructs the filesystem path for a table.
-   Creates the directory if it doesn't exist.
-   
-   Parameters:
-   - table-name: String, keyword, or vector for nested tables
-   
-   Returns:
-   - A java.io.File object representing the table's directory
-   
-   Example:
-   (get-table-path :users)
-   ;=> #object[java.io.File \"fsdb/users\"]
-   
-   (get-table-path [:orgs :departments])
-   ;=> #object[java.io.File \"fsdb/orgs/departments\"]"
-  [table-name]
-  (let [path-parts (if (vector? table-name)
-                     (mapv ->str table-name)
-                     [(->str table-name)])
-        table-path (apply io/file *db-root* path-parts)]
-    (when-not (.exists table-path)
-      (.mkdirs table-path))
-    table-path))
-
 (defn get-config-path
   "Constructs the path to a table's configuration directory.
    Used for storing table-specific metadata and settings.
@@ -183,7 +151,7 @@
    (get-config-path :users)
    ;=> #object[java.io.File \"fsdb/__fsdb__/users\"]"
   [table-name]
-  (get-table-path
+  (p/as-file
    (into ["__fsdb__"] (mkvec table-name))))
 
 (defn get-next-id
@@ -200,9 +168,8 @@
    (get-next-id :users) ;=> 1  ; First call
    (get-next-id :users) ;=> 2  ; Second call"
   [table-name]
-  (let [counter-path (get-table-path
-                      (into ["__fsdb__"] (mkvec table-name)))
-        counter-file (io/file counter-path "__counter__.edn")]
+  (let [counter-file (p/as-file (into ["__fsdb__"] (mkvec table-name))
+                                counter-doc-id)]
     (if (.exists counter-file)
       (let [current-id (read-string* (slurp counter-file))]
         (spit counter-file (str (inc current-id)))
@@ -305,7 +272,7 @@
    (get-by-id [:organizations :departments] 42)"
   [table-name id]
   (when id
-    (let [entry-file (io/file (get-table-path table-name) (str id))]
+    (let [entry-file (p/as-file table-name (str id))]
       (newline)
       (when (.exists entry-file)
         (read-string* (slurp entry-file))))))
@@ -326,7 +293,7 @@
    (get-by-ids :users [1 2 3])
    (get-by-ids [:orgs :deps] [42 43])"
   [table-name ids]
-  (let [table-path (get-table-path table-name)]
+  (let [table-path (p/as-file table-name)]
     (->> ids
          (map str)
          (map #(io/file table-path %))
@@ -347,10 +314,10 @@
    (get-all :users)
    (get-all [:organizations :departments])"
   [table-name]
-  (let [table-path (get-table-path table-name)]
+  (let [table-path (p/as-file table-name)]
     (->> (.listFiles table-path)
          (filter #(.isFile %))
-         (remove #(= (.getName %) "_counter.edn"))
+         (remove #(= (.getName %) counter-doc-id))
          (map #(read-string* (slurp %))))))
 
 (defn limit-clause
@@ -498,7 +465,7 @@
         data-with-id (maybe-add-timestamps
                       table-name
                       (assoc data id-kw id))
-        entry-file (io/file (get-table-path table-name) (str id))]
+        entry-file (p/as-file table-name (str id))]
     (spit entry-file (pr-str data-with-id))
     data-with-id))
 
@@ -534,7 +501,7 @@
          (fn [user] 
            (update user :login-count inc)))"
   [table-name id data-or-fn]
-  (let [entry-file (io/file (get-table-path table-name) (str id))]
+  (let [entry-file (p/as-file table-name (str id))]
     (if (.exists entry-file)
       (let [existing-data (read-string* (slurp entry-file))
             updated-data (update-data table-name existing-data data-or-fn)]
@@ -557,7 +524,7 @@
    (delete :users 1)
    (delete [:orgs :departments] 42)"
   [table-name id]
-  (let [entry-file (io/file (get-table-path table-name) (str id))]
+  (let [entry-file (p/as-file table-name id)]
     (if (.exists entry-file)
       (do
         (.delete entry-file)
@@ -574,7 +541,7 @@
    Example:
    (reset-db!)"
   []
-  (fs/delete-dir *db-root*))
+  (fs/delete-dir p/*db-root*))
 
 (defn drop-table!
   "Removes a table and all its data from the database.
@@ -591,7 +558,7 @@
    (drop-table! [:organizations :departments])"
   [table-name]
   (-> table-name get-config-path fs/delete-dir)
-  (let [file (get-table-path table-name)]
+  (let [file (p/as-file table-name)]
     (when (.exists file)
       (-> (fs/delete-dir file)))))
 
@@ -608,10 +575,10 @@
    (get-count :users)
    (get-count [:organizations :departments])"
   [table-name]
-  (let [table-path (get-table-path table-name)]
+  (let [table-path (p/as-file table-name)]
     (->> (fs/list-dir table-path)
          (filter (fn [x]
                    (and (.isFile x)
-                        (not= "_counter.edn"
+                        (not= counter-doc-id
                               (.getName x)))))
          (count))))

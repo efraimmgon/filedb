@@ -317,7 +317,6 @@
   (let [table-path (p/as-file table-name)]
     (->> (.listFiles table-path)
          (filter #(.isFile %))
-         (remove #(= (.getName %) counter-doc-id))
          (map #(read-string* (slurp %))))))
 
 (defn limit-clause
@@ -578,7 +577,5 @@
   (let [table-path (p/as-file table-name)]
     (->> (fs/list-dir table-path)
          (filter (fn [x]
-                   (and (.isFile x)
-                        (not= counter-doc-id
-                              (.getName x)))))
+                   (.isFile x)))
          (count))))

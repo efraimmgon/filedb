@@ -97,14 +97,14 @@
    This is an internal function used to maintain consistent ID field naming.
    
    Parameters:
-   - table-name: The name of the table (unused, kept for future extensibility)
+   - coll: The name of the table (unused, kept for future extensibility)
    
    Returns:
    - The keyword :_id
    
    Example:
    (id-keyword :users) ;=> :_id"
-  [_table-name]
+  [_coll]
   :_id)
 
 (defn- created-at-keyword
@@ -113,14 +113,14 @@
    naming.
    
    Parameters:
-   - table-name: The name of the table (unused, kept for future extensibility)
+   - coll: The name of the table (unused, kept for future extensibility)
    
    Returns:
    - The keyword :_created-at
    
    Example:
    (created-at-keyword :users) ;=> :_created-at"
-  [_table-name]
+  [_coll]
   :_created-at)
 
 (defn- updated-at-keyword
@@ -129,14 +129,14 @@
    naming.
    
    Parameters:
-   - table-name: The name of the table (unused, kept for future extensibility)
+   - coll: The name of the table (unused, kept for future extensibility)
    
    Returns:
    - The keyword :_updated-at
    
    Example:
    (updated-at-keyword :users) ;=> :_updated-at"
-  [_table-name]
+  [_coll]
   :_updated-at)
 
 (defn get-config-path
@@ -144,7 +144,7 @@
    Used for storing table-specific metadata and settings.
    
    Parameters:
-   - table-name: String, keyword, or vector for nested tables
+   - coll: String, keyword, or vector for nested tables
    
    Returns:
    - A java.io.File object representing the table's config directory
@@ -152,16 +152,16 @@
    Example:
    (get-config-path :users)
    ;=> #object[java.io.File \"fsdb/__fsdb__/users\"]"
-  [table-name]
+  [coll]
   (p/as-file
-   (into ["__fsdb__"] (mkvec table-name))))
+   (into ["__fsdb__"] (mkvec coll))))
 
 (defn get-next-id
   "Generates and returns the next available ID for a table.
    Uses a counter file to maintain ID sequence.
    
    Parameters:
-   - table-name: String, keyword, or vector for nested tables
+   - coll: String, keyword, or vector for nested tables
    
    Returns:
    - The next available integer ID
@@ -169,8 +169,8 @@
    Example:
    (get-next-id :users) ;=> 1  ; First call
    (get-next-id :users) ;=> 2  ; Second call"
-  [table-name]
-  (let [counter-file (p/as-file (into ["__fsdb__"] (mkvec table-name))
+  [coll]
+  (let [counter-file (p/as-file (into ["__fsdb__"] (mkvec coll))
                                 counter-doc-id)]
     (if (.exists counter-file)
       (let [current-id (read-string* (slurp counter-file))]
@@ -236,7 +236,7 @@
   "Adds created-at and updated-at timestamps to data if they don't exist.
    
    Parameters:
-   - table-name: The name of the table (for determining timestamp field names)
+   - coll: The name of the table (for determining timestamp field names)
    - data: The map to add timestamps to
    
    Returns:
@@ -246,13 +246,13 @@
    (maybe-add-timestamps :users {})
    ;=> {:_created-at #inst \"2024-03-20T10:00:00.000Z\"
    ;    :_updated-at #inst \"2024-03-20T10:00:00.000Z\"}"
-  [table-name data]
+  [coll data]
   (let [timestamp (now)]
     (-> data
         (maybe-add-created-at
-         (created-at-keyword table-name) timestamp)
+         (created-at-keyword coll) timestamp)
         (add-updated-at
-         (updated-at-keyword table-name) timestamp))))
+         (updated-at-keyword coll) timestamp))))
 
 ;;; ----------------------------------------------------------------------------
 ;;; Core
@@ -262,7 +262,7 @@
   "Retrieves a single entry from the database by its ID.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested 
+   - coll: The name of the table (string, keyword, or vector for nested 
    tables)
    - id: The unique identifier of the entry
    
@@ -273,9 +273,9 @@
    Example:
    (get-by-id :users 1)
    (get-by-id [:organizations :departments] 42)"
-  [table-name id]
+  [coll id]
   (when id
-    (let [entry-file (p/as-file table-name (str id))]
+    (let [entry-file (p/as-file coll (str id))]
       (newline)
       (when (.exists entry-file)
         (read-string* (slurp entry-file))))))
@@ -285,7 +285,7 @@
    operation. More efficient than making multiple get-by-id calls.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested 
+   - coll: The name of the table (string, keyword, or vector for nested 
    tables)
    - ids: A collection of IDs to retrieve
    
@@ -296,8 +296,8 @@
    Example:
    (get-by-ids :users [1 2 3])
    (get-by-ids [:orgs :deps] [42 43])"
-  [table-name ids]
-  (let [table-path (p/as-file table-name)]
+  [coll ids]
+  (let [table-path (p/as-file coll)]
     (->> ids
          (map str)
          (map #(io/file table-path %))
@@ -308,7 +308,7 @@
   "Retrieves all entries from a table.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested 
+   - coll: The name of the table (string, keyword, or vector for nested 
    tables)
    
    Returns:
@@ -318,8 +318,8 @@
    Example:
    (get-all :users)
    (get-all [:organizations :departments])"
-  [table-name]
-  (let [table-path (p/as-file table-name)]
+  [coll]
+  (let [table-path (p/as-file coll)]
     (->> (.listFiles table-path)
          (filter #(.isFile %))
          (map #(read-string* (slurp %))))))
@@ -374,7 +374,7 @@
    pagination.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested 
+   - coll: The name of the table (string, keyword, or vector for nested 
    tables)
    - opts: A map of query options:
      - :where    - A predicate function for filtering entries
@@ -397,9 +397,9 @@
    (query :orders
          {:where (fn [order] (= (:status order) :pending))
           :order-by [:date :asc]})"
-  [table-name {:keys [limit offset order-by where]}]
+  [coll {:keys [limit offset order-by where]}]
   (let [result
-        (cond->> (get-all table-name)
+        (cond->> (get-all coll)
           where (filter where)
           order-by (sort-by (first order-by)
                             (case (second order-by)
@@ -440,11 +440,11 @@
   "Takes a variable amount of keyval args and the entries that match the 
    keyvals given.
    Accepts the same options as  `query`"
-  ([table-name k v]
-   (get-by-key table-name k v nil))
-  ([table-name k v & kvs-opts]
+  ([coll k v]
+   (get-by-key coll k v nil))
+  ([coll k v & kvs-opts]
    (query
-    table-name
+    coll
     (build-params {} k v kvs-opts))))
 
 (defn insert
@@ -452,7 +452,7 @@
    timestamps.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested 
+   - coll: The name of the table (string, keyword, or vector for nested 
    tables)
    - data: A map containing the entry data
           If :_id key is present, uses that as ID instead of generating one
@@ -468,26 +468,26 @@
    (insert :users 
           {:_id \"custom-id\"
            :name \"Jane Doe\"})"
-  [table-name data]
-  (let [id-kw (id-keyword table-name)
+  [coll data]
+  (let [id-kw (id-keyword coll)
         id (if-let [id (id-kw data)]
              id
-             (get-next-id table-name))
+             (get-next-id coll))
         data-with-id (maybe-add-timestamps
-                      table-name
+                      coll
                       (assoc data id-kw id))
-        entry-file (p/as-file table-name (str id))]
+        entry-file (p/as-file coll (str id))]
     (spit entry-file (pr-str data-with-id))
     data-with-id))
 
-(defn- update-data [table-name original-data new-data]
+(defn- update-data [coll original-data new-data]
   (let [updated
         (if (test/function? new-data)
           (new-data original-data)
           (merge original-data new-data))
 
         with-updated-timestamps
-        (maybe-add-timestamps table-name updated)]
+        (maybe-add-timestamps coll updated)]
 
     with-updated-timestamps))
 
@@ -496,7 +496,7 @@
    function.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested 
+   - coll: The name of the table (string, keyword, or vector for nested 
    tables)
    - id: The unique identifier of the entry to update
    - data-or-fn: Either:
@@ -514,11 +514,11 @@
    (patch :users 1 
          (fn [user] 
            (update user :login-count inc)))"
-  [table-name id data-or-fn]
-  (let [entry-file (p/as-file table-name (str id))]
+  [coll id data-or-fn]
+  (let [entry-file (p/as-file coll (str id))]
     (if (.exists entry-file)
       (let [existing-data (read-string* (slurp entry-file))
-            updated-data (update-data table-name existing-data data-or-fn)]
+            updated-data (update-data coll existing-data data-or-fn)]
         (spit entry-file (pr-str updated-data))
         updated-data)
       false)))
@@ -527,7 +527,7 @@
   "Removes an entry from the table.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested 
+   - coll: The name of the table (string, keyword, or vector for nested 
    tables)
    - id: The unique identifier of the entry to delete
    
@@ -538,8 +538,8 @@
    Example:
    (delete :users 1)
    (delete [:orgs :departments] 42)"
-  [table-name id]
-  (let [entry-file (p/as-file table-name id)]
+  [coll id]
+  (let [entry-file (p/as-file coll id)]
     (if (.exists entry-file)
       (do
         (.delete entry-file)
@@ -563,7 +563,7 @@
    Use with caution as this operation cannot be undone.
    
    Parameters:
-   - table-name: The name of the table to drop
+   - coll: The name of the table to drop
    
    Returns:
    - nil
@@ -571,9 +571,9 @@
    Example:
    (drop-table! :users)
    (drop-table! [:organizations :departments])"
-  [table-name]
-  (-> table-name get-config-path fs/delete-dir)
-  (let [file (p/as-file table-name)]
+  [coll]
+  (-> coll get-config-path fs/delete-dir)
+  (let [file (p/as-file coll)]
     (when (.exists file)
       (-> (fs/delete-dir file)))))
 
@@ -581,7 +581,7 @@
   "Returns the total number of entries in a table.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested 
+   - coll: The name of the table (string, keyword, or vector for nested 
    tables)
    
    Returns:
@@ -590,8 +590,8 @@
    Example:
    (get-count :users)
    (get-count [:organizations :departments])"
-  [table-name]
-  (let [table-path (p/as-file table-name)]
+  [coll]
+  (let [table-path (p/as-file coll)]
     (->> (fs/list-dir table-path)
          (filter (fn [x]
                    (.isFile x)))

@@ -47,51 +47,6 @@
     [x]
     x))
 
-(defn deep-merge
-  "Recursively merges maps and concatenates vectors.
-   
-   Parameters:
-   - a: First map
-   - b: Second map
-   
-   Returns:
-   - A new map containing the merged contents of both maps
-   - For nested maps, merges recursively
-   - For vectors, concatenates them
-   - For other values, takes the value from b
-   
-   Example:
-   (deep-merge {:a {:b 1} :c [1]}
-              {:a {:d 2} :c [2]})
-   ;=> {:a {:b 1 :d 2} :c [1 2]}"
-  [a b]
-  (merge-with (fn [x y]
-                (cond (map? y) (deep-merge x y)
-                      (vector? y) (concat x y)
-                      :else y))
-              a b))
-
-(defn ->str
-  "Converts a value to its string representation.
-   Handles keywords and symbols by extracting their names.
-   
-   Parameters:
-   - x: Value to convert (keyword, symbol, or any other type)
-   
-   Returns:
-   - For keywords/symbols: their name without namespace
-   - For other types: the value itself
-   
-   Example:
-   (->str :users)     ;=> \"users\"
-   (->str 'my-table)  ;=> \"my-table\"
-   (->str \"string\") ;=> \"string\""
-  [x]
-  (cond
-    (keyword? x) (name x)
-    (symbol? x) (name x)
-    :else x))
-
 (defn- id-keyword
   "Returns the standard ID field keyword for a table.
    This is an internal function used to maintain consistent ID field naming.
@@ -586,7 +541,7 @@
    
    Returns:
    - The number of entries in the table (integer)
-   
+  
    Example:
    (get-count :users)
    (get-count [:organizations :departments])"

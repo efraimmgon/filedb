@@ -109,7 +109,8 @@
 
 (defn- created-at-keyword
   "Returns the standard created-at field keyword for a table.
-   This is an internal function used to maintain consistent timestamp field naming.
+   This is an internal function used to maintain consistent timestamp field 
+   naming.
    
    Parameters:
    - table-name: The name of the table (unused, kept for future extensibility)
@@ -124,7 +125,8 @@
 
 (defn- updated-at-keyword
   "Returns the standard updated-at field keyword for a table.
-   This is an internal function used to maintain consistent timestamp field naming.
+   This is an internal function used to maintain consistent timestamp field 
+   naming.
    
    Parameters:
    - table-name: The name of the table (unused, kept for future extensibility)
@@ -260,7 +262,8 @@
   "Retrieves a single entry from the database by its ID.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested tables)
+   - table-name: The name of the table (string, keyword, or vector for nested 
+   tables)
    - id: The unique identifier of the entry
    
    Returns:
@@ -278,11 +281,12 @@
         (read-string* (slurp entry-file))))))
 
 (defn get-by-ids
-  "Retrieves multiple entries from the database by their IDs in a single operation.
-   More efficient than making multiple get-by-id calls.
+  "Retrieves multiple entries from the database by their IDs in a single 
+   operation. More efficient than making multiple get-by-id calls.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested tables)
+   - table-name: The name of the table (string, keyword, or vector for nested 
+   tables)
    - ids: A collection of IDs to retrieve
    
    Returns:
@@ -304,7 +308,8 @@
   "Retrieves all entries from a table.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested tables)
+   - table-name: The name of the table (string, keyword, or vector for nested 
+   tables)
    
    Returns:
    - A sequence of all entries in the table
@@ -341,7 +346,8 @@
     (take limit coll)))
 
 (defn kv=
-  "Creates a predicate function that checks if a map contains a specific key-value pair.
+  "Creates a predicate function that checks if a map contains a specific 
+   key-value pair.
    Commonly used with the query function's :where clause.
    
    Parameters:
@@ -349,7 +355,8 @@
    - v: The value to compare against
    
    Returns:
-   - A function that takes a map and returns true if the map contains the key-value pair
+   - A function that takes a map and returns true if the map contains the 
+   key-value pair
    
    Example:
    (def active-users (kv= :status :active))
@@ -363,13 +370,16 @@
     (= (get ctx k) v)))
 
 (defn query
-  "Performs a query on the table with support for filtering, ordering, and pagination.
+  "Performs a query on the table with support for filtering, ordering, and 
+   pagination.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested tables)
+   - table-name: The name of the table (string, keyword, or vector for nested 
+   tables)
    - opts: A map of query options:
      - :where    - A predicate function for filtering entries
-     - :order-by - A vector of [field direction], where direction is :asc or :desc
+     - :order-by - A vector of [field direction], where direction is :asc or 
+   :desc
      - :offset   - Number of entries to skip
      - :limit    - Maximum number of entries to return
    
@@ -438,10 +448,12 @@
     (build-params {} k v kvs-opts))))
 
 (defn insert
-  "Inserts a new entry into the table with automatic ID generation and timestamps.
+  "Inserts a new entry into the table with automatic ID generation and 
+   timestamps.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested tables)
+   - table-name: The name of the table (string, keyword, or vector for nested 
+   tables)
    - data: A map containing the entry data
           If :_id key is present, uses that as ID instead of generating one
    
@@ -480,14 +492,17 @@
     with-updated-timestamps))
 
 (defn patch
-  "Updates an existing entry by merging new data or applying a transformation function.
+  "Updates an existing entry by merging new data or applying a transformation 
+   function.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested tables)
+   - table-name: The name of the table (string, keyword, or vector for nested 
+   tables)
    - id: The unique identifier of the entry to update
    - data-or-fn: Either:
                 - A map to merge with existing data
-                - A function that takes the existing data and returns updated data
+                - A function that takes the existing data and returns updated 
+                data
    
    Returns:
    - The updated entry data if successful
@@ -512,7 +527,8 @@
   "Removes an entry from the table.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested tables)
+   - table-name: The name of the table (string, keyword, or vector for nested 
+   tables)
    - id: The unique identifier of the entry to delete
    
    Returns:
@@ -565,7 +581,8 @@
   "Returns the total number of entries in a table.
    
    Parameters:
-   - table-name: The name of the table (string, keyword, or vector for nested tables)
+   - table-name: The name of the table (string, keyword, or vector for nested 
+   tables)
    
    Returns:
    - The number of entries in the table (integer)

@@ -2,15 +2,16 @@
   (:require
    [clojure.java.io :as io]
    [clojure.test :refer :all]
-   [filedb.core :as core :refer [->FileDB]]
+   [filedb.core :as core]
    [me.raynes.fs :as fs]))
 
 (def test-db-dir "test-fsdb")
 
 (def test-db
   "Test-specific database instance"
-  (->FileDB test-db-dir
-            (assoc core/default-keywords :coll-ns-type :simple)))
+  (core/create-db
+   {:db-root test-db-dir
+    :keyword-strategy (assoc core/default-keywords :coll-ns-type :simple)}))
 
 (defn dispose []
   (fs/delete-dir test-db-dir))
@@ -137,7 +138,7 @@
 
 (deftest test-fully-qualified-keywords
   (let [test-db-dir (str test-db-dir "-qualified")
-        qualified-db (->FileDB test-db-dir core/default-keywords)
+        qualified-db (core/create-db {:db-root test-db-dir})
         coll-name :users
         row #:users{:id "user-1" :name "John" :role "admin"}]
 
@@ -189,8 +190,10 @@
 
 (deftest test-fully-qualified-keywords
   (let [test-db-dir (str test-db-dir "-qualified")
-        qualified-db (->FileDB test-db-dir
-                               (assoc core/default-keywords :coll-ns-type :full))
+        qualified-db (core/create-db
+                      {:db-root test-db-dir
+                       :keyword-strategy (assoc core/default-keywords
+                                                :coll-ns-type :full)})
         coll-name :users
         row #:users{:id "user-1" :name "John" :role "admin"}]
 
@@ -237,5 +240,51 @@
         (testing "delete nested collection"
           (core/delete-coll! qualified-db nested-coll)
           (is (empty? (core/get-all qualified-db nested-coll))))))
+
+    (fs/delete-dir test-db-dir)))
+
+(deftest test-uuid-primary-key
+  (let [test-db-dir (str test-db-dir "-uuid")
+        uuid-db (core/create-db {:db-root test-db-dir
+                                 :keyword-strategy (assoc core/default-keywords
+                                                          :coll-ns-type :simple)
+                                 :primary-key-type :uuid})
+        coll-name :users
+        test-data {:name "John" :role "admin"}]
+
+    (testing "insert generates valid UUIDs"
+      (let [inserted (core/insert! uuid-db coll-name test-data)
+            id (:id inserted)]
+        (is (string? id))
+        (is (re-matches #"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" id))
+        (is (= "John" (:name inserted)))))
+
+    (testing "get operations with UUID"
+      (let [inserted (core/insert! uuid-db coll-name test-data)
+            id (:id inserted)]
+        (testing "get-by-id works with UUID"
+          (let [fetched (core/get-by-id uuid-db coll-name id)]
+            (is (= id (:id fetched)))
+            (is (= "John" (:name fetched)))))
+
+        (testing "get-by-ids works with UUIDs"
+          (let [second-entry (core/insert! uuid-db coll-name {:name "Jane"})
+                ids [id (:id second-entry)]
+                fetched (core/get-by-ids uuid-db coll-name ids)]
+            (is (= 2 (count fetched)))
+            (is (= #{"John" "Jane"} (set (map :name fetched))))))))
+
+    (testing "update operations with UUID"
+      (let [inserted (core/insert! uuid-db coll-name test-data)
+            id (:id inserted)
+            updated (core/update! uuid-db coll-name id {:role "superadmin"})]
+        (is (= "superadmin" (:role updated)))
+        (is (= id (:id updated)))))
+
+    (testing "delete operations with UUID"
+      (let [inserted (core/insert! uuid-db coll-name test-data)
+            id (:id inserted)]
+        (is (true? (core/delete! uuid-db coll-name id)))
+        (is (nil? (core/get-by-id uuid-db coll-name id)))))
 
     (fs/delete-dir test-db-dir)))

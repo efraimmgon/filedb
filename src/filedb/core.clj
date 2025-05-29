@@ -567,7 +567,7 @@
     :else
     acc))
 
-(defrecord FileDB [db-root keyword-strategy]
+(defrecord FileDB [db-root keyword-strategy primary-key-type]
   IFileDB
 
   (maybe-add-timestamps [_this coll data]
@@ -583,15 +583,18 @@
      this, (into ["__fsdb__"] (mkvec coll))))
 
   (get-next-id [this coll]
-    (let [counter-file
-          (->as-file this, (into ["__fsdb__"] (mkvec coll)), counter-doc-id)]
-      (if (.exists counter-file)
-        (let [current-id (read-string* (slurp counter-file))]
-          (spit counter-file (str (inc current-id)))
-          (inc current-id))
-        (let [next-id 1]
-          (spit counter-file next-id)
-          next-id))))
+    (case primary-key-type
+      :uuid (str (java.util.UUID/randomUUID))
+      :int-auto-increment
+      (let [counter-file
+            (->as-file this, (into ["__fsdb__"] (mkvec coll)), counter-doc-id)]
+        (if (.exists counter-file)
+          (let [current-id (read-string* (slurp counter-file))]
+            (spit counter-file (str (inc current-id)))
+            (inc current-id))
+          (let [next-id 1]
+            (spit counter-file next-id)
+            next-id)))))
 
   (get-by-id [this coll id]
     (when id
@@ -685,9 +688,31 @@
                    (.isFile x)))
          (count))))
 
-(def default-db
-  "The default FileDB instance.
-   Uses \"filedb\" as the root directory and `default-keywords` for keyword strategy."
-  (->FileDB
-   default-db-root
-   default-keywords))
+(defn create-db
+  "Creates a new FileDB instance with custom configuration.
+   
+   Parameters:
+   - opts (optional): A map of options:
+     - :db-root: The root directory for the database (default: \"filedb\")
+     - :keyword-strategy: Strategy for keyword generation (default: default-keywords)
+     - :primary-key-type: Strategy for ID generation, :int-auto-increment or :uuid (default: :int-auto-increment)
+   
+   Returns:
+   - A new FileDB instance
+   
+   Examples:
+   ;; Create a DB with UUID IDs
+   (create-db {:primary-key-type :uuid})
+   
+   ;; Create a DB with custom root and UUID IDs
+   (create-db {:db-root \"my-db\"
+              :primary-key-type :uuid})"
+  ([]
+   (create-db {}))
+  ([{:keys [db-root keyword-strategy primary-key-type]
+     :or {db-root default-db-root
+          keyword-strategy default-keywords
+          primary-key-type :int-auto-increment}}]
+
+   (->FileDB db-root keyword-strategy primary-key-type)))
+

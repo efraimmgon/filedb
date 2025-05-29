@@ -30,11 +30,12 @@
   (->> (for [[i name_] (map-indexed vector colln)
              :when (even? i)]
          (parse-coll-name name_))
-       (clojure.string/join ".")))
+       vec))
 
 ;; Examples for ids:
 ;; :user => :user/id
 ;; [:user 123 :profile] => :user.profile/id
+
 (defn mk-keyword
   "Creates a keyword, optionally qualifying it.
    If `use-qualified-keyword?` is true, the keyword is qualified with a 
@@ -43,21 +44,27 @@
    `colln` is either a scalar of the collection name or a odd path-like vector 
    of scalars, e.g., `[:users]` or `[:users 1 :profiles]`.
    `k` is the keyword name, e.g., `:id`."
-  [colln k use-qualified-keyword?]
-  (if-not use-qualified-keyword?
-    k
-    (keyword (parse-coll-name colln) (name k))))
+  [colln k coll-ns-type]
+  (case coll-ns-type
+    :simple k
+    :partial (if-not (vector? colln)
+               (keyword (parse-coll-name colln) (name k))
+               (keyword (-> colln last parse-coll-name) (name k)))
+    :full (if-not (vector? colln)
+            (keyword (parse-coll-name colln) (name k))
+            (keyword (->> colln parse-coll-name (clojure.string/join "."))
+                     (name k)))))
 
 (defprotocol  KeywordStrategy
   (id-keyword [this coll])
   (created-at-keyword [this coll])
   (updated-at-keyword [this coll]))
 
-(defrecord KeywordStrat [id created-at updated-at use-qualified-keyword?]
+(defrecord KeywordStrat [id created-at updated-at coll-ns-type]
   KeywordStrategy
-  (id-keyword [_ coll] (mk-keyword coll id use-qualified-keyword?))
-  (created-at-keyword [_ coll] (mk-keyword coll created-at use-qualified-keyword?))
-  (updated-at-keyword [_ coll] (mk-keyword coll updated-at use-qualified-keyword?)))
+  (id-keyword [_ coll] (mk-keyword coll id coll-ns-type))
+  (created-at-keyword [_ coll] (mk-keyword coll created-at coll-ns-type))
+  (updated-at-keyword [_ coll] (mk-keyword coll updated-at coll-ns-type)))
 
 (def default-keywords
   "Default implementation of KeywordStrategy.
@@ -67,7 +74,7 @@
    {:id :id
     :created-at :created-at
     :updated-at :updated-at
-    :use-qualified-keyword? true}))
+    :coll-ns-type :partial}))
 
 (defprotocol IFileDB
   (maybe-add-timestamps [this coll data]

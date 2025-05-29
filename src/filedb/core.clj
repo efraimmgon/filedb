@@ -38,7 +38,7 @@
   (let [parsed (p/parse-coll-name colln)
         dir (io/file (:db-root db)
                      (if (vector? colln)
-                       (clojure.string/replace parsed "." "/")
+                       (clojure.string/join "/" parsed)
                        parsed))]
     (when-not (.exists dir)
       (.mkdirs dir))

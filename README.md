@@ -71,8 +71,11 @@ io.github.efraimmgon/filedb {:git/tag "v0.0.1" :git/sha "23f9afa"}
 ;; Query records
 (db/get-by-key db :users :name "John Doe")
 
-;; Update a record
+;; Update a record with a map
 (db/update! db :users 1 {:status :active})
+
+;; Update a record with a function
+(db/update! db :users 1 #(assoc % :name "Jane Doe"))
 
 ;; Delete a record
 (db/delete! db :users 1)
@@ -122,15 +125,15 @@ io.github.efraimmgon/filedb {:git/tag "v0.0.1" :git/sha "23f9afa"}
 
 FileDB supports different keyword qualification strategies:
 
-- `:simple` - No qualification
-- `:partial` - Qualifies with collection name
-- `:full` - Full qualification including nested paths
+- `:simple` - No qualification (e.g. `:id`)
+- `:partial` - Given a nested collection such as `[:users 1 :posts]`, uses the last element as the collection name (e.g. `:posts/id`)
+- `:full` - Given a nested collection such as `[:users 1 :posts]`, uses the all collection elements (e.g. `:users, :posts`) as the collection name (e.g. `:users.posts/id`)
 
 ```clojure
 ;; Create a DB with custom keyword strategy
 (def custom-db 
   (->FileDB "custom-db" 
-            (assoc db/default-keywords :coll-ns-type :full))) ; :simple, :partial, :full
+            (assoc db/default-keywords :coll-ns-type :simple)))
 ```
 
 ## API Reference

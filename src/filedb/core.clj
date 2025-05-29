@@ -7,19 +7,18 @@
    [me.raynes.fs :as fs]))
 
 (def counter-doc-id
-  "__counter__.edn")
+  "Filename for the document that stores the next available ID for a collection.
+   Default value: \"__counter__.edn\"")
 
 (defn read-string*
-  "Reads an EDN string with support for #inst literals.
-   
+  "Reads an EDN string with support for #inst literals representing java.time.Instant.
    Parameters:
-   - s: A string containing EDN data
-   
+   - s: A string containing EDN data.
    Returns:
-   - The parsed EDN data with proper instant handling
-   
+   - The parsed EDN data structure.
    Example:
-   (read-string* \"#inst \\\"2024-03-20T10:00:00Z\\\"\")"
+   (read-string* \"#inst \\\"2024-03-20T10:00:00Z\\\"\")
+   ;=> #object[java.time.Instant \"2024-03-20T10:00:00Z\"]"
   [s]
   (edn/read-string
    {:readers {'inst #(java.time.Instant/parse %)}}
@@ -28,6 +27,17 @@
 ;;; ----------------------------------------------------------------------------
 ;;; Utils
 ;;; ----------------------------------------------------------------------------
+
+(defn ->as-file
+  "Converts an entity into a file path.
+   - Single arity: 
+    for collections (e.g., (as-file db :users) -> filedb/users)
+   - Double arity: 
+    for documents (e.g., (as-file db :users \"123\") -> filedb/users/123)"
+  ([db coll]
+   (->as-file db coll nil))
+  ([db coll doc-id]
+   (p/as-file db coll doc-id)))
 
 (defn mkvec
   "Ensures a value is wrapped in a vector.
@@ -47,94 +57,6 @@
     [x]
     x))
 
-(defn- id-keyword
-  "Returns the standard ID field keyword for a table.
-   This is an internal function used to maintain consistent ID field naming.
-   
-   Parameters:
-   - coll: The name of the table (unused, kept for future extensibility)
-   
-   Returns:
-   - The keyword :_id
-   
-   Example:
-   (id-keyword :users) ;=> :_id"
-  [_coll]
-  :_id)
-
-(defn- created-at-keyword
-  "Returns the standard created-at field keyword for a table.
-   This is an internal function used to maintain consistent timestamp field 
-   naming.
-   
-   Parameters:
-   - coll: The name of the table (unused, kept for future extensibility)
-   
-   Returns:
-   - The keyword :_created-at
-   
-   Example:
-   (created-at-keyword :users) ;=> :_created-at"
-  [_coll]
-  :_created-at)
-
-(defn- updated-at-keyword
-  "Returns the standard updated-at field keyword for a table.
-   This is an internal function used to maintain consistent timestamp field 
-   naming.
-   
-   Parameters:
-   - coll: The name of the table (unused, kept for future extensibility)
-   
-   Returns:
-   - The keyword :_updated-at
-   
-   Example:
-   (updated-at-keyword :users) ;=> :_updated-at"
-  [_coll]
-  :_updated-at)
-
-(defn get-config-path
-  "Constructs the path to a table's configuration directory.
-   Used for storing table-specific metadata and settings.
-   
-   Parameters:
-   - coll: String, keyword, or vector for nested tables
-   
-   Returns:
-   - A java.io.File object representing the table's config directory
-   
-   Example:
-   (get-config-path :users)
-   ;=> #object[java.io.File \"fsdb/__fsdb__/users\"]"
-  [coll]
-  (p/as-file
-   (into ["__fsdb__"] (mkvec coll))))
-
-(defn get-next-id
-  "Generates and returns the next available ID for a table.
-   Uses a counter file to maintain ID sequence.
-   
-   Parameters:
-   - coll: String, keyword, or vector for nested tables
-   
-   Returns:
-   - The next available integer ID
-   
-   Example:
-   (get-next-id :users) ;=> 1  ; First call
-   (get-next-id :users) ;=> 2  ; Second call"
-  [coll]
-  (let [counter-file (p/as-file (into ["__fsdb__"] (mkvec coll))
-                                counter-doc-id)]
-    (if (.exists counter-file)
-      (let [current-id (read-string* (slurp counter-file))]
-        (spit counter-file (str (inc current-id)))
-        (inc current-id))
-      (let [next-id 1]
-        (spit counter-file next-id)
-        next-id))))
-
 ;; So that java.time.Instant prints as a inst literal
 (defmethod print-method java.time.Instant [obj ^java.io.Writer w]
   (.write w (str "#inst \"" (.toString obj) "\"")))
@@ -152,149 +74,52 @@
   (java.time.Instant/now))
 
 (defn maybe-add-created-at
-  "Adds a created-at timestamp to data if it doesn't already exist.
-   
+  "Adds a created-at timestamp to a map if it doesn't already have one.
    Parameters:
-   - data: The map to potentially add the timestamp to
-   - k: The key to use for the timestamp
-   - timestamp: The timestamp value to add
-   
+   - data: The map to potentially add the timestamp to.
+   - k: The keyword to use for the created-at timestamp.
+   - timestamp: The timestamp value (java.time.Instant) to add.
    Returns:
-   - The data map, possibly with added timestamp
-   
+   - The data map, possibly with the added created-at timestamp.
    Example:
-   (maybe-add-created-at {} :_created-at (now))
-   ;=> {:_created-at #inst \"2024-03-20T10:00:00.000Z\"}"
+   (maybe-add-created-at {} :created-at (now))
+   ;=> {:created-at #inst \"2024-03-20T10:00:00.000Z\"}"
   [data k timestamp]
   (if (contains? data k)
     data
     (assoc data k timestamp)))
 
 (defn add-updated-at
-  "Adds or updates the updated-at timestamp in the data.
-   
+  "Adds or updates the updated-at timestamp in a map.
    Parameters:
-   - data: The map to add/update the timestamp in
-   - k: The key to use for the timestamp
-   - timestamp: The timestamp value to set
-   
+   - data: The map to add/update the timestamp in.
+   - k: The keyword to use for the updated-at timestamp.
+   - timestamp: The timestamp value (java.time.Instant) to set.
    Returns:
-   - The data map with updated timestamp
-   
+   - The data map with the updated_at timestamp.
    Example:
-   (add-updated-at {} :_updated-at (now))
-   ;=> {:_updated-at #inst \"2024-03-20T10:00:00.000Z\"}"
+   (add-updated-at {:updated-at (now)} :updated-at (now))
+   ;=> {:updated-at #inst \"2024-03-20T10:00:01.000Z\"}"
   [data k timestamp]
   (assoc data k timestamp))
-
-(defn maybe-add-timestamps
-  "Adds created-at and updated-at timestamps to data if they don't exist.
-   
-   Parameters:
-   - coll: The name of the table (for determining timestamp field names)
-   - data: The map to add timestamps to
-   
-   Returns:
-   - The data map with added/updated timestamps
-   
-   Example:
-   (maybe-add-timestamps :users {})
-   ;=> {:_created-at #inst \"2024-03-20T10:00:00.000Z\"
-   ;    :_updated-at #inst \"2024-03-20T10:00:00.000Z\"}"
-  [coll data]
-  (let [timestamp (now)]
-    (-> data
-        (maybe-add-created-at
-         (created-at-keyword coll) timestamp)
-        (add-updated-at
-         (updated-at-keyword coll) timestamp))))
 
 ;;; ----------------------------------------------------------------------------
 ;;; Core
 ;;; ----------------------------------------------------------------------------
 
-(defn get-by-id
-  "Retrieves a single entry from the database by its ID.
-   
-   Parameters:
-   - coll: The name of the table (string, keyword, or vector for nested 
-   tables)
-   - id: The unique identifier of the entry
-   
-   Returns:
-   - The entry as a map if found
-   - nil if no entry exists with the given ID
-   
-   Example:
-   (get-by-id :users 1)
-   (get-by-id [:organizations :departments] 42)"
-  [coll id]
-  (when id
-    (let [entry-file (p/as-file coll (str id))]
-      (newline)
-      (when (.exists entry-file)
-        (read-string* (slurp entry-file))))))
-
-(defn get-by-ids
-  "Retrieves multiple entries from the database by their IDs in a single 
-   operation. More efficient than making multiple get-by-id calls.
-   
-   Parameters:
-   - coll: The name of the table (string, keyword, or vector for nested 
-   tables)
-   - ids: A collection of IDs to retrieve
-   
-   Returns:
-   - A sequence of entries that match the provided IDs
-   - Empty sequence if no matches found
-   
-   Example:
-   (get-by-ids :users [1 2 3])
-   (get-by-ids [:orgs :deps] [42 43])"
-  [coll ids]
-  (let [table-path (p/as-file coll)]
-    (->> ids
-         (map str)
-         (map #(io/file table-path %))
-         (filter #(.exists %))
-         (map #(read-string* (slurp %))))))
-
-(defn get-all
-  "Retrieves all entries from a table.
-   
-   Parameters:
-   - coll: The name of the table (string, keyword, or vector for nested 
-   tables)
-   
-   Returns:
-   - A sequence of all entries in the table
-   - Empty sequence if the table is empty
-   
-   Example:
-   (get-all :users)
-   (get-all [:organizations :departments])"
-  [coll]
-  (let [table-path (p/as-file coll)]
-    (->> (.listFiles table-path)
-         (filter #(.isFile %))
-         (map #(read-string* (slurp %))))))
-
 (defn limit-clause
-  "Applies a limit to a collection, returning either the first element or a 
-   limited sequence.
-   
+  "Applies a limit to a sequence. If limit is 1, returns the first item only.
+   Otherwise, returns a sequence of at most 'limit' items.
+   If limit is nil or not provided, returns the original sequence.
    Parameters:
-   - limit: The maximum number of items to return
-   - coll: The collection to limit
-   
+   - limit: The maximum number of items to return (integer or nil).
+   - coll: The sequence to limit.
    Returns:
-   - If limit is 1: The first item only
-   - Otherwise: A sequence of at most 'limit' items
-   
+   - The first item if limit is 1, or a potentially limited sequence.
    Example:
    (limit-clause 1 [1 2 3])   ;=> 1
    (limit-clause 2 [1 2 3])   ;=> (1 2)
-   (limit-clause nil [1 2 3]) ;=> [1 2 3]"
+   (limit-clause nil [1 2 3]) ;=> (1 2 3)"
   [limit coll]
   (if (= limit 1)
     (first coll)
@@ -324,47 +149,18 @@
   (fn [ctx]
     (= (get ctx k) v)))
 
-(defn query
-  "Performs a query on the table with support for filtering, ordering, and 
-   pagination.
-   
+(defn- build-params
+  "Recursively builds a parameter map for the `query` function.
+   Primarily used internally by `get-by-key` to construct the `:where` clause
+   by AND-ing multiple key-value conditions, and merging other options.
    Parameters:
-   - coll: The name of the table (string, keyword, or vector for nested 
-   tables)
-   - opts: A map of query options:
-     - :where    - A predicate function for filtering entries
-     - :order-by - A vector of [field direction], where direction is :asc or 
-   :desc
-     - :offset   - Number of entries to skip
-     - :limit    - Maximum number of entries to return
-   
+   - acc: Accumulator map for query parameters.
+   - k: Key for a condition or an options map.
+   - v: Value for a condition.
+   - kvs-opts: Sequence of further key-value pairs or options maps.
    Returns:
-   - A sequence of entries matching the query criteria
-   - If limit is 1, returns a single entry instead of a sequence
-   
-   Examples:
-   (query :users 
-         {:where #(> (:age %) 21)
-          :order-by [:created-at :desc]
-          :limit 10
-          :offset 0})
-   
-   (query :orders
-         {:where (fn [order] (= (:status order) :pending))
-          :order-by [:date :asc]})"
-  [coll {:keys [limit offset order-by where]}]
-  (let [result
-        (cond->> (get-all coll)
-          where (filter where)
-          order-by (sort-by (first order-by)
-                            (case (second order-by)
-                              :asc compare
-                              :desc #(compare %2 %1)))
-          offset (drop offset)
-          limit (limit-clause limit))]
-    result))
-
-(defn- build-params [acc k v kvs-opts]
+   - A map of query parameters suitable for `p/query`."
+  [acc k v kvs-opts]
   (cond
     (not (contains? acc :where))
     (build-params
@@ -391,163 +187,127 @@
     :else
     acc))
 
-(defn get-by-key
-  "Takes a variable amount of keyval args and the entries that match the 
-   keyvals given.
-   Accepts the same options as  `query`"
-  ([coll k v]
-   (get-by-key coll k v nil))
-  ([coll k v & kvs-opts]
-   (query
-    coll
-    (build-params {} k v kvs-opts))))
+(defrecord FileDB [db-root keyword-strategy]
+  p/IFileDB
 
-(defn insert
-  "Inserts a new entry into the table with automatic ID generation and 
-   timestamps.
-   
-   Parameters:
-   - coll: The name of the table (string, keyword, or vector for nested 
-   tables)
-   - data: A map containing the entry data
-          If :_id key is present, uses that as ID instead of generating one
-   
-   Returns:
-   - The inserted data with added :_id, :_created-at, and :_updated-at fields
-   
-   Example:
-   (insert :users 
-          {:name \"John Doe\"
-           :email \"john@example.com\"})
-   
-   (insert :users 
-          {:_id \"custom-id\"
-           :name \"Jane Doe\"})"
-  [coll data]
-  (let [id-kw (id-keyword coll)
-        id (if-let [id (id-kw data)]
-             id
-             (get-next-id coll))
-        data-with-id (maybe-add-timestamps
-                      coll
-                      (assoc data id-kw id))
-        entry-file (p/as-file coll (str id))]
-    (spit entry-file (pr-str data-with-id))
-    data-with-id))
+  (maybe-add-timestamps [_this coll data]
+    (let [timestamp (now)]
+      (-> data
+          (maybe-add-created-at
+           (p/created-at-keyword keyword-strategy coll) timestamp)
+          (add-updated-at
+           (p/updated-at-keyword keyword-strategy coll) timestamp))))
 
-(defn- update-data [coll original-data new-data]
-  (let [updated
-        (if (test/function? new-data)
-          (new-data original-data)
-          (merge original-data new-data))
+  (get-config-path [this coll]
+    (->as-file
+     this, (into ["__fsdb__"] (mkvec coll))))
 
-        with-updated-timestamps
-        (maybe-add-timestamps coll updated)]
+  (get-next-id [this coll]
+    (let [counter-file
+          (->as-file this, (into ["__fsdb__"] (mkvec coll)), counter-doc-id)]
+      (if (.exists counter-file)
+        (let [current-id (read-string* (slurp counter-file))]
+          (spit counter-file (str (inc current-id)))
+          (inc current-id))
+        (let [next-id 1]
+          (spit counter-file next-id)
+          next-id))))
 
-    with-updated-timestamps))
+  (get-by-id [this coll id]
+    (when id
+      (let [entry-file (->as-file this coll (str id))]
+        (newline)
+        (when (.exists entry-file)
+          (read-string* (slurp entry-file))))))
 
-(defn patch
-  "Updates an existing entry by merging new data or applying a transformation 
-   function.
-   
-   Parameters:
-   - coll: The name of the table (string, keyword, or vector for nested 
-   tables)
-   - id: The unique identifier of the entry to update
-   - data-or-fn: Either:
-                - A map to merge with existing data
-                - A function that takes the existing data and returns updated 
-                data
-   
-   Returns:
-   - The updated entry data if successful
-   - false if the entry doesn't exist
-   
-   Examples:
-   (patch :users 1 {:status :inactive})
-   
-   (patch :users 1 
-         (fn [user] 
-           (update user :login-count inc)))"
-  [coll id data-or-fn]
-  (let [entry-file (p/as-file coll (str id))]
-    (if (.exists entry-file)
-      (let [existing-data (read-string* (slurp entry-file))
-            updated-data (update-data coll existing-data data-or-fn)]
-        (spit entry-file (pr-str updated-data))
-        updated-data)
-      false)))
+  (get-by-ids [this coll ids]
+    (let [table-path (->as-file this coll)]
+      (->> ids
+           (map str)
+           (map #(io/file table-path %))
+           (filter #(.exists %))
+           (map #(read-string* (slurp %))))))
 
-(defn delete
-  "Removes an entry from the table.
-   
-   Parameters:
-   - coll: The name of the table (string, keyword, or vector for nested 
-   tables)
-   - id: The unique identifier of the entry to delete
-   
-   Returns:
-   - true if the entry was successfully deleted
-   - false if the entry didn't exist
-   
-   Example:
-   (delete :users 1)
-   (delete [:orgs :departments] 42)"
-  [coll id]
-  (let [entry-file (p/as-file coll id)]
-    (if (.exists entry-file)
-      (do
-        (.delete entry-file)
-        true)
-      false)))
+  (get-all [this coll]
+    (let [table-path (->as-file this coll)]
+      (->> (.listFiles table-path)
+           (filter #(.isFile %))
+           (map #(read-string* (slurp %))))))
 
-(defn reset-db!
-  "Completely resets the database by removing all tables and their data.
-   Use with caution as this operation cannot be undone.
-   
-   Returns:
-   - nil
-   
-   Example:
-   (reset-db!)"
-  []
-  (fs/delete-dir p/*db-root*))
+  (query [this coll {:keys [limit offset order-by where]}]
+    (let [result
+          (cond->> (p/get-all this coll)
+            where (filter where)
+            order-by (sort-by (first order-by)
+                              (case (second order-by)
+                                :asc compare
+                                :desc #(compare %2 %1)))
+            offset (drop offset)
+            limit (limit-clause limit))]
+      result))
 
-(defn drop-table!
-  "Removes a table and all its data from the database.
-   Use with caution as this operation cannot be undone.
-   
-   Parameters:
-   - coll: The name of the table to drop
-   
-   Returns:
-   - nil
-   
-   Example:
-   (drop-table! :users)
-   (drop-table! [:organizations :departments])"
-  [coll]
-  (-> coll get-config-path fs/delete-dir)
-  (let [file (p/as-file coll)]
-    (when (.exists file)
-      (-> (fs/delete-dir file)))))
+  (get-by-key [this coll k v]
+    (p/get-by-key this coll k v nil))
 
-(defn get-count
-  "Returns the total number of entries in a table.
-   
-   Parameters:
-   - coll: The name of the table (string, keyword, or vector for nested 
-   tables)
-   
-   Returns:
-   - The number of entries in the table (integer)
-  
-   Example:
-   (get-count :users)
-   (get-count [:organizations :departments])"
-  [coll]
-  (let [table-path (p/as-file coll)]
-    (->> (fs/list-dir table-path)
+  (get-by-key [this coll k v kv-opts]
+    (p/query this
+             coll
+             (build-params {} k v kv-opts)))
+
+  (insert! [this coll data]
+    (let [id-kw (p/id-keyword keyword-strategy coll)
+          id (if-let [id (id-kw data)]
+               id
+               (p/get-next-id this coll))
+          data-with-id (p/maybe-add-timestamps this
+                                               coll
+                                               (assoc data id-kw id))
+          entry-file (->as-file this coll (str id))]
+      (spit entry-file (pr-str data-with-id))
+      data-with-id))
+
+  (update! [this coll id data-or-fn]
+    (let [entry-file (->as-file this coll (str id))]
+      (if (.exists entry-file)
+        (let [existing-data (read-string* (slurp entry-file))
+
+              updated
+              (if (test/function? data-or-fn)
+                (data-or-fn existing-data)
+                (merge existing-data data-or-fn))
+
+              updated-data (p/maybe-add-timestamps this coll updated)]
+          (spit entry-file (pr-str updated-data))
+          updated-data)
+        false)))
+
+  (delete! [this coll id]
+    (let [entry-file (->as-file this coll id)]
+      (if (.exists entry-file)
+        (do
+          (.delete entry-file)
+          true)
+        false)))
+
+  (reset-db! [_this]
+    (fs/delete-dir db-root))
+
+  (delete-coll! [this coll]
+    (->> coll (p/get-config-path this) fs/delete-dir)
+    (let [file (->as-file this coll)]
+      (when (.exists file)
+        (-> (fs/delete-dir file)))))
+
+  (get-count [this coll]
+    (->> (->as-file this coll)
+         (fs/list-dir)
          (filter (fn [x]
                    (.isFile x)))
          (count))))
+
+(def default-db
+  "The default FileDB instance.
+   Uses \"filedb\" as the root directory and `p/default-keywords` for keyword strategy."
+  (->FileDB
+   "filedb"
+   p/default-keywords))

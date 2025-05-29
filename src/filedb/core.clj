@@ -4,12 +4,377 @@
    [clojure.java.io :as io]
    [clojure.string]
    [clojure.test :as test]
-   [filedb.protocols :as p]
    [me.raynes.fs :as fs]))
+
+;;; ----------------------------------------------------------------------------
+;;; Default names
+;;; ----------------------------------------------------------------------------
 
 (def counter-doc-id
   "Filename for the document that stores the next available ID for a collection.
-   Default value: \"__counter__.edn\"")
+   Default value: \"__counter__.edn\""
+  "__counter__.edn")
+
+(def default-db-root
+  "The default root directory for the database.
+   Used by the default FileDB instance.
+   
+   Default value: \"filedb\""
+  "filedb")
+
+;;; ----------------------------------------------------------------------------
+;;; Protocols, Records
+;;; ----------------------------------------------------------------------------
+
+(defmulti parse-coll-name
+  "Parses a collection name into a string representation based on its type.
+   Supports strings, longs, symbols, keywords, and vectors.
+   
+   Parameters:
+   - colln: The collection name to parse (can be string, long, symbol, keyword, or vector)
+   
+   Returns:
+   - String representation of the collection name
+   
+   Examples:
+   (parse-coll-name \"users\")     ;=> \"users\"
+   (parse-coll-name :users)        ;=> \"users\"
+   (parse-coll-name 'users)        ;=> \"users\"
+   (parse-coll-name 123)          ;=> \"123\"
+   (parse-coll-name [:users 1])   ;=> [\"users\"]"
+  (fn [colln]
+    (type colln)))
+
+(defmethod parse-coll-name java.lang.String [colln] colln)
+
+(defmethod parse-coll-name java.lang.Long [colln] (str colln))
+
+(defmethod parse-coll-name clojure.lang.Symbol [colln] (name colln))
+
+(defmethod parse-coll-name clojure.lang.Keyword [colln] (name colln))
+
+(defmethod parse-coll-name clojure.lang.PersistentVector [colln]
+  (->> (for [[i name_] (map-indexed vector colln)
+             :when (even? i)]
+         (parse-coll-name name_))
+       vec))
+
+;; Examples for ids:
+;; :user => :user/id
+;; [:user 123 :profile] => :user.profile/id
+
+(defn mk-keyword
+  "Creates a keyword, optionally qualifying it based on the collection namespace type.
+   
+   Parameters:
+   - colln: Collection name or path vector (e.g., :users or [:users 1 :profiles])
+   - k: Base keyword to qualify (e.g., :id)
+   - coll-ns-type: Namespace strategy (:simple, :partial, or :full)
+   
+   Returns:
+   - :simple: Returns k unmodified
+   - :partial: Returns k qualified with last collection name
+   - :full: Returns k qualified with dot-separated collection path
+   
+   Examples:
+   (mk-keyword :users :id :simple) ;=> :id
+   (mk-keyword :users :id :partial) ;=> :users/id
+   (mk-keyword [:users 1 :profiles] :id :full) ;=> :users.profiles/id"
+  [colln k coll-ns-type]
+  (case coll-ns-type
+    :simple k
+    :partial (if-not (vector? colln)
+               (keyword (parse-coll-name colln) (name k))
+               (keyword (-> colln last parse-coll-name) (name k)))
+    :full (if-not (vector? colln)
+            (keyword (parse-coll-name colln) (name k))
+            (keyword (->> colln parse-coll-name (clojure.string/join "."))
+                     (name k)))))
+
+(defprotocol KeywordStrategy
+  "Protocol for defining how database keywords (like IDs and timestamps) are generated.
+   Allows customization of keyword formats and namespacing strategies."
+  (id-keyword [this coll]
+    "Generates the keyword to be used for IDs in the given collection.
+     
+     Parameters:
+     - coll: The collection name or path vector
+     
+     Returns:
+     - A keyword to be used as the ID field")
+  (created-at-keyword [this coll]
+    "Generates the keyword to be used for creation timestamps.
+     
+     Parameters:
+     - coll: The collection name or path vector
+     
+     Returns:
+     - A keyword to be used as the created-at field")
+  (updated-at-keyword [this coll]
+    "Generates the keyword to be used for update timestamps.
+     
+     Parameters:
+     - coll: The collection name or path vector
+     
+     Returns:
+     - A keyword to be used as the updated-at field"))
+
+(defrecord KeywordStrat [id created-at updated-at coll-ns-type]
+  KeywordStrategy
+  (id-keyword [_ coll] (mk-keyword coll id coll-ns-type))
+  (created-at-keyword [_ coll] (mk-keyword coll created-at coll-ns-type))
+  (updated-at-keyword [_ coll] (mk-keyword coll updated-at coll-ns-type)))
+
+(def default-keywords
+  "Default implementation of KeywordStrategy.
+   Uses `:id`, `:created-at`, and `:updated-at` as base keywords
+   and enables qualified keywords with :partial namespacing (e.g., `:user/id`).
+   
+   Fields:
+   - :id :id
+   - :created-at :created-at
+   - :updated-at :updated-at
+   - :coll-ns-type :partial
+   
+   Example usage:
+   (id-keyword default-keywords :users) ;=> :users/id
+   (created-at-keyword default-keywords :users) ;=> :users/created-at"
+  (map->KeywordStrat
+   {:id :id
+    :created-at :created-at
+    :updated-at :updated-at
+    :coll-ns-type :partial}))
+
+(defprotocol IFileDB
+  (maybe-add-timestamps [this coll data]
+    "Adds created-at and updated-at timestamps to data if they don't exist.
+        
+        Parameters:
+        - coll: The name of the coll (for determining timestamp field names)
+        - data: The map to add timestamps to
+        
+        Returns:
+        - The data map with added/updated timestamps
+        
+        Example:
+        (maybe-add-timestamps :users {})
+        ;=> {:created-at #inst \"2024-03-20T10:00:00.000Z\"
+        ;    :updated-at #inst \"2024-03-20T10:00:00.000Z\"}")
+
+  (get-config-path [this coll]
+    "Constructs the path to a coll's configuration directory.
+       Used for storing coll-specific metadata and settings.
+       
+       Parameters:
+       - coll: String, keyword, or vector for nested colls
+       
+       Returns:
+       - A java.io.File object representing the coll's config directory
+       
+       Example:
+       (get-config-path :users)
+       ;=> #object[java.io.File \"fsdb/__fsdb__/users\"]")
+
+  (get-next-id [this coll]
+    "Generates and returns the next available ID for a coll.
+       Uses a counter file to maintain ID sequence.
+       
+       Parameters:
+       - coll: String, keyword, or vector for nested colls
+       
+       Returns:
+       - The next available integer ID
+       
+       Example:
+       (get-next-id :users) ;=> 1  ; First call
+       (get-next-id :users) ;=> 2  ; Second call")
+
+  (get-by-id [this coll id]
+    "Retrieves a single entry from the database by its ID.
+       
+       Parameters:
+       - coll: The name of the coll (string, keyword, or vector for nested 
+       colls)
+       - id: The unique identifier of the entry
+       
+       Returns:
+       - The entry as a map if found
+       - nil if no entry exists with the given ID
+       
+       Example:
+       (get-by-id :users 1)
+       (get-by-id [:organizations :departments] 42)")
+
+  (get-by-ids [this coll ids]
+    "Retrieves multiple entries from the database by their IDs in a single 
+       operation. More efficient than making multiple get-by-id calls.
+       
+       Parameters:
+       - coll: The name of the coll (string, keyword, or vector for nested 
+       colls)
+       - ids: A collection of IDs to retrieve
+       
+       Returns:
+       - A sequence of entries that match the provided IDs
+       - Empty sequence if no matches found
+       
+       Example:
+       (get-by-ids :users [1 2 3])
+       (get-by-ids [:orgs :deps] [42 43])")
+
+  (get-all [this coll]
+    "Retrieves all entries from a coll.
+       
+       Parameters:
+       - coll: The name of the coll (string, keyword, or vector for nested 
+       colls)
+       
+       Returns:
+       - A sequence of all entries in the coll
+       - Empty sequence if the coll is empty
+       
+       Example:
+       (get-all :users)
+       (get-all [:organizations :departments])")
+
+  (query [this coll opts]
+    "Performs a query on the coll with support for filtering, ordering, and 
+       pagination.
+       
+       Parameters:
+       - coll: The name of the coll (string, keyword, or vector for nested 
+       colls)
+       - opts: A map of query options:
+         - :where    - A predicate function for filtering entries
+         - :order-by - A vector of [field direction], where direction is :asc or 
+       :desc
+         - :offset   - Number of entries to skip
+         - :limit    - Maximum number of entries to return
+       
+       Returns:
+       - A sequence of entries matching the query criteria
+       - If limit is 1, returns a single entry instead of a sequence
+       
+       Examples:
+       (query :users 
+             {:where #(> (:age %) 21)
+              :order-by [:created-at :desc]
+              :limit 10
+              :offset 0})
+       
+       (query :orders
+             {:where (fn [order] (= (:status order) :pending))
+              :order-by [:date :asc]})")
+
+  (get-by-key
+    [this coll k v]
+    [this coll k v opts]
+    "Takes a key-value pair and optional query options map.
+     Returns the entries that match. Accepts the same options as query.")
+
+  (insert! [this coll data]
+    "Inserts a new entry into the coll with automatic ID generation and 
+       timestamps.
+       
+       Parameters:
+       - coll: The name of the coll (string, keyword, or vector for nested 
+       colls)
+       - data: A map containing the entry data
+              If :_id key is present, uses that as ID instead of generating one
+       
+       Returns:
+       - The inserted data with added :_id, :_created-at, and :_updated-at fields
+       
+       Example:
+       (insert :users 
+              {:name \"John Doe\"
+               :email \"john@example.com\"})
+       
+       (insert :users 
+              {:_id \"custom-id\"
+               :name \"Jane Doe\"})")
+
+  (update! [this coll id data-or-fn]
+    "Updates an existing entry by merging new data or applying a transformation 
+       function.
+       
+       Parameters:
+       - coll: The name of the coll (string, keyword, or vector for nested 
+       colls)
+       - id: The unique identifier of the entry to update
+       - data-or-fn: Either:
+                    - A map to merge with existing data
+                    - A function that takes the existing data and returns updated 
+                    data
+       
+       Returns:
+       - The updated entry data if successful
+       - false if the entry doesn't exist
+       
+       Examples:
+       (update! :users 1 {:status :inactive})
+       
+       (update! :users 1
+             (fn [user] 
+               (update user :login-count inc)))")
+
+  (delete! [this coll id]
+    "Removes an entry from the coll.
+       
+       Parameters:
+       - coll: The name of the coll (string, keyword, or vector for nested 
+       colls)
+       - id: The unique identifier of the entry to delete
+       
+       Returns:
+       - true if the entry was successfully deleted
+       - false if the entry didn't exist
+       
+       Example:
+       (delete :users 1)
+       (delete [:orgs :departments] 42)")
+
+  (reset-db! [this]
+    "Completely resets the database by removing all colls and their data.
+       Use with caution as this operation cannot be undone.
+       
+       Returns:
+       - nil
+       
+       Example:
+       (reset-db!)")
+
+  (delete-coll! [this coll]
+    "Removes a coll and all its data from the database.
+       Use with caution as this operation cannot be undone.
+       
+       Parameters:
+       - coll: The name of the coll to drop
+       
+       Returns:
+       - nil
+       
+       Example:
+       (delete-coll! :users)
+       (delete-coll! [:organizations :departments])")
+
+  (get-count [this coll]
+    "Returns the total number of entries in a coll.
+       
+       Parameters:
+       - coll: The name of the coll (string, keyword, or vector for nested 
+       colls)
+       
+       Returns:
+       - The number of entries in the coll (integer)
+      
+       Example:
+       (get-count :users)
+       (get-count [:organizations :departments])"))
+
+;;; ----------------------------------------------------------------------------
+;;; Utils
+;;; ----------------------------------------------------------------------------
 
 (defn read-string*
   "Reads an EDN string with support for #inst literals representing java.time.Instant.
@@ -25,9 +390,6 @@
    {:readers {'inst #(java.time.Instant/parse %)}}
    s))
 
-;;; ----------------------------------------------------------------------------
-;;; Utils
-;;; ----------------------------------------------------------------------------
 (defn- mkdirs-if-not-exist!
   "Ensures that the directory structure for a given collection exists.
    Creates directories under the database's root path if they are missing.
@@ -35,7 +397,7 @@
    `colln` is the raw collection identifier (scalar or vector).
    Returns a java.io.File object representing the directory."
   [db colln]
-  (let [parsed (p/parse-coll-name colln)
+  (let [parsed (parse-coll-name colln)
         dir (io/file (:db-root db)
                      (if (vector? colln)
                        (clojure.string/join "/" parsed)
@@ -177,7 +539,7 @@
    - v: Value for a condition.
    - kvs-opts: Sequence of further key-value pairs or options maps.
    Returns:
-   - A map of query parameters suitable for `p/query`."
+   - A map of query parameters suitable for `query`."
   [acc k v kvs-opts]
   (cond
     (not (contains? acc :where))
@@ -206,15 +568,15 @@
     acc))
 
 (defrecord FileDB [db-root keyword-strategy]
-  p/IFileDB
+  IFileDB
 
   (maybe-add-timestamps [_this coll data]
     (let [timestamp (now)]
       (-> data
           (maybe-add-created-at
-           (p/created-at-keyword keyword-strategy coll) timestamp)
+           (created-at-keyword keyword-strategy coll) timestamp)
           (add-updated-at
-           (p/updated-at-keyword keyword-strategy coll) timestamp))))
+           (updated-at-keyword keyword-strategy coll) timestamp))))
 
   (get-config-path [this coll]
     (->as-file
@@ -254,7 +616,7 @@
 
   (query [this coll {:keys [limit offset order-by where]}]
     (let [result
-          (cond->> (p/get-all this coll)
+          (cond->> (get-all this coll)
             where (filter where)
             order-by (sort-by (first order-by)
                               (case (second order-by)
@@ -265,21 +627,21 @@
       result))
 
   (get-by-key [this coll k v]
-    (p/get-by-key this coll k v nil))
+    (get-by-key this coll k v nil))
 
   (get-by-key [this coll k v kv-opts]
-    (p/query this
-             coll
-             (build-params {} k v kv-opts)))
+    (query this
+           coll
+           (build-params {} k v kv-opts)))
 
   (insert! [this coll data]
-    (let [id-kw (p/id-keyword keyword-strategy coll)
+    (let [id-kw (id-keyword keyword-strategy coll)
           id (if-let [id (id-kw data)]
                id
-               (p/get-next-id this coll))
-          data-with-id (p/maybe-add-timestamps this
-                                               coll
-                                               (assoc data id-kw id))
+               (get-next-id this coll))
+          data-with-id (maybe-add-timestamps this
+                                             coll
+                                             (assoc data id-kw id))
           entry-file (->as-file this coll (str id))]
       (spit entry-file (pr-str data-with-id))
       data-with-id))
@@ -294,7 +656,7 @@
                 (data-or-fn existing-data)
                 (merge existing-data data-or-fn))
 
-              updated-data (p/maybe-add-timestamps this coll updated)]
+              updated-data (maybe-add-timestamps this coll updated)]
           (spit entry-file (pr-str updated-data))
           updated-data)
         false)))
@@ -311,7 +673,7 @@
     (fs/delete-dir db-root))
 
   (delete-coll! [this coll]
-    (->> coll (p/get-config-path this) fs/delete-dir)
+    (->> coll (get-config-path this) fs/delete-dir)
     (let [file (->as-file this coll)]
       (when (.exists file)
         (-> (fs/delete-dir file)))))
@@ -325,7 +687,7 @@
 
 (def default-db
   "The default FileDB instance.
-   Uses \"filedb\" as the root directory and `p/default-keywords` for keyword strategy."
+   Uses \"filedb\" as the root directory and `default-keywords` for keyword strategy."
   (->FileDB
-   p/default-db-root
-   p/default-keywords))
+   default-db-root
+   default-keywords))

@@ -54,7 +54,7 @@ Once your prototype proves successful and you have real users, that's the right 
 Add the following dependency to your `deps.edn`:
 
 ```clojure
-io.github.efraimmgon/filedb {:git/tag "v0.0.2" :git/sha "16ec406"}
+io.github.efraimmgon/filedb {:git/tag "v0.0.3" :git/sha "1c62e19"}
 ```
 
 ## Quick Start

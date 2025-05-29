@@ -14,29 +14,39 @@
      (insert :users {...}))"
   "filedb")
 
+(defmulti parse-coll-name
+  (fn [colln]
+    (type colln)))
+
+(defmethod parse-coll-name java.lang.String [colln] colln)
+
+(defmethod parse-coll-name java.lang.Long [colln] (str colln))
+
+(defmethod parse-coll-name clojure.lang.Symbol [colln] (name colln))
+
+(defmethod parse-coll-name clojure.lang.Keyword [colln] (name colln))
+
+(defmethod parse-coll-name clojure.lang.PersistentVector [colln]
+  (->> (for [[i name_] (map-indexed vector colln)
+             :when (even? i)]
+         (parse-coll-name name_))
+       (clojure.string/join ".")))
+
 ;; Examples for ids:
 ;; :user => :user/id
 ;; [:user 123 :profile] => :user.profile/id
-(defn parse-nested-coll
-  "Parses a collection (expected to be a flat sequence of keywords or strings)
-   into a dot-separated string. Takes elements at even indices.
-   Example: `[:a :b :c :d]` -> `\"a.c\"`"
-  [coll]
-  (->> (for [[i k] (map-indexed vector coll)
-             :when (even? i)]
-         (name k))
-       (clojure.string/join ".")))
-
 (defn mk-keyword
   "Creates a keyword, optionally qualifying it.
-   If `use-qualified-keyword?` is true, the keyword is qualified with a namespace
-   generated from `coll` using `parse-nested-coll`. Otherwise, `k` is returned directly.
-   `coll` is typically a path-like vector of keywords, e.g., `[:users]` or `[:users :profiles]`.
+   If `use-qualified-keyword?` is true, the keyword is qualified with a 
+   namespace generated from `colln` using `parse-nested-coll`. Otherwise, `k` 
+   is returned directly.
+   `colln` is either a scalar of the collection name or a odd path-like vector 
+   of scalars, e.g., `[:users]` or `[:users 1 :profiles]`.
    `k` is the keyword name, e.g., `:id`."
-  [coll k use-qualified-keyword?]
+  [colln k use-qualified-keyword?]
   (if-not use-qualified-keyword?
     k
-    (keyword (parse-nested-coll coll) (name k))))
+    (keyword (parse-coll-name colln) (name k))))
 
 (defprotocol  KeywordStrategy
   (id-keyword [this coll])
@@ -285,64 +295,3 @@
        Example:
        (get-count :users)
        (get-count [:organizations :departments])"))
-
-(defn mkdirs-if-not-exist!
-  "Ensures that the directory structure for a given collection exists.
-   Creates directories under the database's root path if they are missing.
-   `db` is the database instance map, expected to contain `:db-root`.
-   `coll` is the collection identifier (string, keyword, or vector).
-   Returns a java.io.File object representing the directory."
-  [db coll]
-  (let [dir (if (coll? coll)
-              (apply io/file (:db-root db) coll)
-              (io/file (:db-root db) coll))]
-    (when-not (.exists dir)
-      (.mkdirs dir))
-    dir))
-
-(defmulti as-file
-  "Converts an entity into a file path.
-    - Single arity: 
-     for collections (e.g., (as-file db :users) -> filedb/users)
-    - Double arity: 
-     for documents (e.g., (as-file db :users \"123\") -> filedb/users/123)"
-  (fn [_db collection & [_doc-id]]
-    (type collection)))
-
-(defn- mk-file-helper
-  "Helper function for `as-file` multimethod.
-   Constructs a java.io.File object representing a collection directory
-   or a specific document file within that directory.
-   `db` is the database instance map.
-   `coll` is the collection identifier.
-   `doc-id` (optional) is the document identifier."
-  [db coll doc-id]
-  (if doc-id
-    (io/file (mkdirs-if-not-exist! db coll) (str doc-id))
-    (io/file (mkdirs-if-not-exist! db coll))))
-
-(defmethod as-file java.lang.String [db coll & [doc-id]]
-  (mk-file-helper db coll doc-id))
-
-(defmethod as-file java.lang.Long [db coll & [doc-id]]
-  (mk-file-helper db (str coll) doc-id))
-
-(defmethod as-file clojure.lang.Symbol [db coll & [doc-id]]
-  (mk-file-helper db (name coll) doc-id))
-
-(defmethod as-file clojure.lang.Keyword [db coll & [doc-id]]
-  (mk-file-helper db (name coll) doc-id))
-
-(defmethod as-file clojure.lang.PersistentVector [db coll & [doc-id]]
-  (mk-file-helper db (map name coll) doc-id))
-
-(defn ->as-file
-  "Converts an entity into a file path.
-   - Single arity: 
-    for collections (e.g., (as-file db :users) -> filedb/users)
-   - Double arity: 
-    for documents (e.g., (as-file db :users \"123\") -> filedb/users/123)"
-  ([db coll]
-   (->as-file db coll nil))
-  ([db coll doc-id]
-   (as-file db coll doc-id)))

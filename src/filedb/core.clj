@@ -2,6 +2,7 @@
   (:require
    [clojure.edn :as edn]
    [clojure.java.io :as io]
+   [clojure.string]
    [clojure.test :as test]
    [filedb.protocols :as p]
    [me.raynes.fs :as fs]))
@@ -27,6 +28,21 @@
 ;;; ----------------------------------------------------------------------------
 ;;; Utils
 ;;; ----------------------------------------------------------------------------
+(defn- mkdirs-if-not-exist!
+  "Ensures that the directory structure for a given collection exists.
+   Creates directories under the database's root path if they are missing.
+   `db` is the database instance map, expected to contain `:db-root`.
+   `colln` is the raw collection identifier (scalar or vector).
+   Returns a java.io.File object representing the directory."
+  [db colln]
+  (let [parsed (p/parse-coll-name colln)
+        dir (io/file (:db-root db)
+                     (if (vector? colln)
+                       (clojure.string/replace parsed "." "/")
+                       parsed))]
+    (when-not (.exists dir)
+      (.mkdirs dir))
+    dir))
 
 (defn ->as-file
   "Converts an entity into a file path.
@@ -36,8 +52,10 @@
     for documents (e.g., (as-file db :users \"123\") -> filedb/users/123)"
   ([db coll]
    (->as-file db coll nil))
-  ([db coll doc-id]
-   (p/as-file db coll doc-id)))
+  ([db colln doc-id]
+   (if-not doc-id
+     (io/file (mkdirs-if-not-exist! db colln))
+     (io/file (mkdirs-if-not-exist! db colln) (str doc-id)))))
 
 (defn mkvec
   "Ensures a value is wrapped in a vector.

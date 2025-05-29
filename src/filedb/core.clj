@@ -327,5 +327,5 @@
   "The default FileDB instance.
    Uses \"filedb\" as the root directory and `p/default-keywords` for keyword strategy."
   (->FileDB
-   "filedb"
+   p/default-db-root
    p/default-keywords))

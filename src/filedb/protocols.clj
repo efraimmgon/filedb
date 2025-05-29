@@ -1,6 +1,5 @@
 (ns filedb.protocols
   (:require
-   [clojure.java.io :as io]
    [clojure.string]))
 
 (def default-db-root
@@ -15,6 +14,21 @@
   "filedb")
 
 (defmulti parse-coll-name
+  "Parses a collection name into a string representation based on its type.
+   Supports strings, longs, symbols, keywords, and vectors.
+   
+   Parameters:
+   - colln: The collection name to parse (can be string, long, symbol, keyword, or vector)
+   
+   Returns:
+   - String representation of the collection name
+   
+   Examples:
+   (parse-coll-name \"users\")     ;=> \"users\"
+   (parse-coll-name :users)        ;=> \"users\"
+   (parse-coll-name 'users)        ;=> \"users\"
+   (parse-coll-name 123)          ;=> \"123\"
+   (parse-coll-name [:users 1])   ;=> [\"users\"]"
   (fn [colln]
     (type colln)))
 
@@ -37,13 +51,22 @@
 ;; [:user 123 :profile] => :user.profile/id
 
 (defn mk-keyword
-  "Creates a keyword, optionally qualifying it.
-   If `use-qualified-keyword?` is true, the keyword is qualified with a 
-   namespace generated from `colln` using `parse-nested-coll`. Otherwise, `k` 
-   is returned directly.
-   `colln` is either a scalar of the collection name or a odd path-like vector 
-   of scalars, e.g., `[:users]` or `[:users 1 :profiles]`.
-   `k` is the keyword name, e.g., `:id`."
+  "Creates a keyword, optionally qualifying it based on the collection namespace type.
+   
+   Parameters:
+   - colln: Collection name or path vector (e.g., :users or [:users 1 :profiles])
+   - k: Base keyword to qualify (e.g., :id)
+   - coll-ns-type: Namespace strategy (:simple, :partial, or :full)
+   
+   Returns:
+   - :simple: Returns k unmodified
+   - :partial: Returns k qualified with last collection name
+   - :full: Returns k qualified with dot-separated collection path
+   
+   Examples:
+   (mk-keyword :users :id :simple) ;=> :id
+   (mk-keyword :users :id :partial) ;=> :users/id
+   (mk-keyword [:users 1 :profiles] :id :full) ;=> :users.profiles/id"
   [colln k coll-ns-type]
   (case coll-ns-type
     :simple k
@@ -55,10 +78,33 @@
             (keyword (->> colln parse-coll-name (clojure.string/join "."))
                      (name k)))))
 
-(defprotocol  KeywordStrategy
-  (id-keyword [this coll])
-  (created-at-keyword [this coll])
-  (updated-at-keyword [this coll]))
+(defprotocol KeywordStrategy
+  "Protocol for defining how database keywords (like IDs and timestamps) are generated.
+   Allows customization of keyword formats and namespacing strategies."
+  (id-keyword [this coll]
+    "Generates the keyword to be used for IDs in the given collection.
+     
+     Parameters:
+     - coll: The collection name or path vector
+     
+     Returns:
+     - A keyword to be used as the ID field")
+  (created-at-keyword [this coll]
+    "Generates the keyword to be used for creation timestamps.
+     
+     Parameters:
+     - coll: The collection name or path vector
+     
+     Returns:
+     - A keyword to be used as the created-at field")
+  (updated-at-keyword [this coll]
+    "Generates the keyword to be used for update timestamps.
+     
+     Parameters:
+     - coll: The collection name or path vector
+     
+     Returns:
+     - A keyword to be used as the updated-at field"))
 
 (defrecord KeywordStrat [id created-at updated-at coll-ns-type]
   KeywordStrategy
@@ -69,7 +115,17 @@
 (def default-keywords
   "Default implementation of KeywordStrategy.
    Uses `:id`, `:created-at`, and `:updated-at` as base keywords
-   and enables qualified keywords (e.g., `:user/id`)."
+   and enables qualified keywords with :partial namespacing (e.g., `:user/id`).
+   
+   Fields:
+   - :id :id
+   - :created-at :created-at
+   - :updated-at :updated-at
+   - :coll-ns-type :partial
+   
+   Example usage:
+   (id-keyword default-keywords :users) ;=> :users/id
+   (created-at-keyword default-keywords :users) ;=> :users/created-at"
   (map->KeywordStrat
    {:id :id
     :created-at :created-at

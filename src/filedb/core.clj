@@ -397,13 +397,13 @@
    `colln` is the raw collection identifier (scalar or vector).
    Returns a java.io.File object representing the directory."
   [db colln]
-  (let [parsed (parse-coll-name colln)
-        dir (io/file (:db-root db)
-                     (if (vector? colln)
-                       (clojure.string/join "/" parsed)
-                       parsed))]
-    (when-not (.exists dir)
-      (.mkdirs dir))
+  (let [path-parts (if (vector? colln)
+                     ;; For nested collections like [:a 1 :b], create path: a/1/b
+                     (mapv parse-coll-name colln)
+                     [(parse-coll-name colln)])
+        dir (apply io/file (:db-root db) path-parts)]
+    (when-not (fs/exists? dir)
+      (fs/mkdirs dir))
     dir))
 
 (defn ->as-file
@@ -412,12 +412,15 @@
     for collections (e.g., (as-file db :users) -> filedb/users)
    - Double arity: 
     for documents (e.g., (as-file db :users \"123\") -> filedb/users/123)"
-  ([db coll]
-   (->as-file db coll nil))
+  ([db colln]
+   (->as-file db colln nil))
   ([db colln doc-id]
    (if-not doc-id
-     (io/file (mkdirs-if-not-exist! db colln))
-     (io/file (mkdirs-if-not-exist! db colln) (str doc-id)))))
+     (mkdirs-if-not-exist! db colln)
+     (let [base-dir (mkdirs-if-not-exist! db colln)
+           doc-dir (io/file base-dir (parse-coll-name doc-id))
+           file (io/file doc-dir "data.edn")]
+       file))))
 
 (defn mkvec
   "Ensures a value is wrapped in a vector.
@@ -586,8 +589,9 @@
     (case primary-key-type
       :uuid (str (java.util.UUID/randomUUID))
       :int-auto-increment
-      (let [counter-file
-            (->as-file this, (into ["__fsdb__"] (mkvec coll)), counter-doc-id)]
+      (let [config-dir (get-config-path this coll)
+            counter-file (io/file config-dir counter-doc-id)]
+        (fs/mkdirs config-dir)
         (if (.exists counter-file)
           (let [current-id (read-string* (slurp counter-file))]
             (spit counter-file (str (inc current-id)))
@@ -598,7 +602,7 @@
 
   (get-by-id [this coll id]
     (when id
-      (let [entry-file (->as-file this coll (str id))]
+      (let [entry-file (->as-file this coll (parse-coll-name id))]
         (newline)
         (when (.exists entry-file)
           (read-string* (slurp entry-file))))))
@@ -606,15 +610,17 @@
   (get-by-ids [this coll ids]
     (let [table-path (->as-file this coll)]
       (->> ids
-           (map str)
-           (map #(io/file table-path %))
+           (map parse-coll-name)
+           (map #(io/file table-path % "data.edn"))
            (filter #(.exists %))
            (map #(read-string* (slurp %))))))
 
   (get-all [this coll]
     (let [table-path (->as-file this coll)]
       (->> (.listFiles table-path)
-           (filter #(.isFile %))
+           (filter #(.isDirectory %))
+           (map #(io/file % "data.edn"))
+           (filter #(.exists %))
            (map #(read-string* (slurp %))))))
 
   (query [this coll {:keys [limit offset order-by where]}]
@@ -639,18 +645,20 @@
 
   (insert! [this coll data]
     (let [id-kw (id-keyword keyword-strategy coll)
-          id (if-let [id (id-kw data)]
+          id (if-let [id (or (id-kw data) (:id data))]
                id
                (get-next-id this coll))
           data-with-id (maybe-add-timestamps this
                                              coll
                                              (assoc data id-kw id))
-          entry-file (->as-file this coll (str id))]
+          entry-file (->as-file this coll (parse-coll-name id))]
+      ;; Ensure document directory exists before writing
+      (fs/mkdirs (.getParentFile entry-file))
       (spit entry-file (pr-str data-with-id))
       data-with-id))
 
   (update! [this coll id data-or-fn]
-    (let [entry-file (->as-file this coll (str id))]
+    (let [entry-file (->as-file this coll (parse-coll-name id))]
       (if (.exists entry-file)
         (let [existing-data (read-string* (slurp entry-file))
 
@@ -660,15 +668,17 @@
                 (merge existing-data data-or-fn))
 
               updated-data (maybe-add-timestamps this coll updated)]
+          ;; Ensure document directory exists before writing
+          (fs/mkdirs (.getParentFile entry-file))
           (spit entry-file (pr-str updated-data))
           updated-data)
         false)))
 
   (delete! [this coll id]
-    (let [entry-file (->as-file this coll id)]
+    (let [entry-file (->as-file this coll (parse-coll-name id))]
       (if (.exists entry-file)
         (do
-          (.delete entry-file)
+          (fs/delete-dir (.getParentFile entry-file))
           true)
         false)))
 
@@ -685,7 +695,7 @@
     (->> (->as-file this coll)
          (fs/list-dir)
          (filter (fn [x]
-                   (.isFile x)))
+                   (.isDirectory x)))
          (count))))
 
 (defn create-db

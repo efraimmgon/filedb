@@ -79,7 +79,12 @@
     (core/insert! test-db :a {:name :a}) ; for further testing
 
     (testing "insert nested coll"
-      (is (= :nested (:name (core/insert! test-db [:a 1 :b] {:name :nested})))))
+      (is (= :nested (:name (core/insert! test-db [:a 1 :b] {:name :nested}))))
+
+      (testing "nested directory structure creation"
+        (let [nested-dir (io/file test-db-dir "a" "1" "b")]
+          (is (true? (.exists nested-dir)))
+          (is (true? (.isDirectory nested-dir))))))
 
     (testing "get operations on nested colls"
       (is (= :nested (-> (core/get-all test-db [:a 1 :b]) first :name)))

@@ -26,7 +26,7 @@
 ;;; Protocols, Records
 ;;; ----------------------------------------------------------------------------
 
-(defmulti parse-coll-name
+(defmulti normalize-coll-name
   "Parses a collection name into a string representation based on its type.
    Supports strings, longs, symbols, keywords, and vectors.
    
@@ -37,31 +37,20 @@
    - String representation of the collection name
    
    Examples:
-   (parse-coll-name \"users\")     ;=> \"users\"
-   (parse-coll-name :users)        ;=> \"users\"
-   (parse-coll-name 'users)        ;=> \"users\"
-   (parse-coll-name 123)          ;=> \"123\"
-   (parse-coll-name [:users 1])   ;=> [\"users\"]"
+   (normalize-coll-name \"users\")     ;=> \"users\"
+   (normalize-coll-name :users)        ;=> \"users\"
+   (normalize-coll-name 'users)        ;=> \"users\"
+   (normalize-coll-name 123)          ;=> \"123\""
   (fn [colln]
     (type colln)))
 
-(defmethod parse-coll-name java.lang.String [colln] colln)
+(defmethod normalize-coll-name :default [colln] (str colln))
 
-(defmethod parse-coll-name java.lang.Long [colln] (str colln))
+(defmethod normalize-coll-name java.lang.String [colln] colln)
 
-(defmethod parse-coll-name clojure.lang.Symbol [colln] (name colln))
+(defmethod normalize-coll-name clojure.lang.Symbol [colln] (name colln))
 
-(defmethod parse-coll-name clojure.lang.Keyword [colln] (name colln))
-
-(defmethod parse-coll-name clojure.lang.PersistentVector [colln]
-  (->> (for [[i name_] (map-indexed vector colln)
-             :when (even? i)]
-         (parse-coll-name name_))
-       vec))
-
-;; Examples for ids:
-;; :user => :user/id
-;; [:user 123 :profile] => :user.profile/id
+(defmethod normalize-coll-name clojure.lang.Keyword [colln] (name colln))
 
 (defn mk-keyword
   "Creates a keyword, optionally qualifying it based on the collection namespace type.
@@ -84,12 +73,16 @@
   (case coll-ns-type
     :simple k
     :partial (if-not (vector? colln)
-               (keyword (parse-coll-name colln) (name k))
-               (keyword (-> colln last parse-coll-name) (name k)))
+               (keyword (normalize-coll-name colln) (name k))
+               (keyword (-> colln last normalize-coll-name) (name k)))
     :full (if-not (vector? colln)
-            (keyword (parse-coll-name colln) (name k))
-            (keyword (->> colln parse-coll-name (clojure.string/join "."))
-                     (name k)))))
+            (keyword (normalize-coll-name colln) (name k))
+            (let [normalized (for [[i name-] (map-indexed vector colln)
+                                   ;; drop the ids
+                                   :when (even? i)]
+                               (normalize-coll-name name-))]
+              (keyword (clojure.string/join "." normalized)
+                       (name k))))))
 
 (defprotocol KeywordStrategy
   "Protocol for defining how database keywords (like IDs and timestamps) are generated.
@@ -399,8 +392,8 @@
   [db colln]
   (let [path-parts (if (vector? colln)
                      ;; For nested collections like [:a 1 :b], create path: a/1/b
-                     (mapv parse-coll-name colln)
-                     [(parse-coll-name colln)])
+                     (mapv normalize-coll-name colln)
+                     [(normalize-coll-name colln)])
         dir (apply io/file (:db-root db) path-parts)]
     (when-not (fs/exists? dir)
       (fs/mkdirs dir))
@@ -418,7 +411,7 @@
    (if-not doc-id
      (mkdirs-if-not-exist! db colln)
      (let [base-dir (mkdirs-if-not-exist! db colln)
-           doc-dir (io/file base-dir (parse-coll-name doc-id))
+           doc-dir (io/file base-dir (normalize-coll-name doc-id))
            file (io/file doc-dir "data.edn")]
        file))))
 
@@ -602,7 +595,7 @@
 
   (get-by-id [this coll id]
     (when id
-      (let [entry-file (->as-file this coll (parse-coll-name id))]
+      (let [entry-file (->as-file this coll (normalize-coll-name id))]
         (newline)
         (when (.exists entry-file)
           (read-string* (slurp entry-file))))))
@@ -610,7 +603,7 @@
   (get-by-ids [this coll ids]
     (let [table-path (->as-file this coll)]
       (->> ids
-           (map parse-coll-name)
+           (map normalize-coll-name)
            (map #(io/file table-path % "data.edn"))
            (filter #(.exists %))
            (map #(read-string* (slurp %))))))
@@ -651,14 +644,14 @@
           data-with-id (maybe-add-timestamps this
                                              coll
                                              (assoc data id-kw id))
-          entry-file (->as-file this coll (parse-coll-name id))]
+          entry-file (->as-file this coll (normalize-coll-name id))]
       ;; Ensure document directory exists before writing
       (fs/mkdirs (.getParentFile entry-file))
       (spit entry-file (pr-str data-with-id))
       data-with-id))
 
   (update! [this coll id data-or-fn]
-    (let [entry-file (->as-file this coll (parse-coll-name id))]
+    (let [entry-file (->as-file this coll (normalize-coll-name id))]
       (if (.exists entry-file)
         (let [existing-data (read-string* (slurp entry-file))
 
@@ -675,7 +668,7 @@
         false)))
 
   (delete! [this coll id]
-    (let [entry-file (->as-file this coll (parse-coll-name id))]
+    (let [entry-file (->as-file this coll (normalize-coll-name id))]
       (if (.exists entry-file)
         (do
           (fs/delete-dir (.getParentFile entry-file))
